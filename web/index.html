@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Mold Design Tool — Phase 2</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #1a1a1a; color: #eee; font-family: sans-serif; overflow: hidden; }
+  #panel {
+    position: absolute; top: 12px; left: 12px; z-index: 10;
+    background: rgba(20,20,20,0.9); padding: 12px 16px; border-radius: 8px;
+    max-width: 360px; max-height: calc(100vh - 24px); overflow-y: auto;
+    font-size: 13px; line-height: 1.5;
+  }
+  #panel h2 { margin: 14px 0 8px; font-size: 15px; }
+  #panel h2:first-child { margin-top: 0; }
+  #panel .warn { color: #ffb454; }
+  #panel ul { margin: 4px 0; padding-left: 18px; }
+  #fileInput { margin-top: 8px; }
+  .spinner {
+    display: inline-block; width: 13px; height: 13px; margin-right: 7px;
+    border: 2px solid rgba(255,255,255,0.25); border-top-color: #9fdbff;
+    border-radius: 50%; animation: spin 0.8s linear infinite; vertical-align: -2px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .row { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+  .row label { flex: 0 0 130px; font-size: 12px; color: #ccc; }
+  .row input[type="range"] { flex: 1; }
+  .row .val { flex: 0 0 50px; text-align: right; font-size: 12px; color: #9fdbff; }
+  .legend { display: flex; gap: 14px; flex-wrap: wrap; margin: 6px 0; font-size: 12px; }
+  .legend span { display: inline-flex; align-items: center; gap: 4px; }
+  .swatch { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+  #resetBtn { margin-top: 8px; padding: 4px 10px; cursor: pointer; }
+  canvas { display: block; }
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+<div id="panel">
+  <h2>Propeller Analysis</h2>
+  <div id="info">Loading...</div>
+  <input type="file" id="fileInput" accept=".stl,.step,.stp" />
+  <div style="font-size:11px;color:#888;margin-top:4px;">Runs entirely in your browser. Your files never leave your computer.</div>
+
+  <h2>Cavity Resolution</h2>
+  <div class="row"><label for="voxelPitch">Voxel pitch</label><input type="range" id="voxelPitch" min="0.1" max="1.0" step="0.05" value="0.2"><span class="val" id="voxelPitchVal">0.2 mm</span></div>
+  <div style="font-size:12px;color:#999;margin-bottom:4px;">Smaller = smoother cavity, slower compute. Changing this re-voxelizes the propeller. <span style="color:#ffb454;">Fine pitch (&lt;0.2 mm) may take 30+ seconds.</span></div>
+
+  <h2>Mold Base</h2>
+  <div class="row"><label for="wallThickness">Wall thickness</label><input type="range" id="wallThickness" min="4" max="12" step="0.5" value="6"><span class="val" id="wallThicknessVal">6 mm</span></div>
+  <div class="row"><label for="baseThickness">Base thickness</label><input type="range" id="baseThickness" min="5" max="50" step="1" value="15"><span class="val" id="baseThicknessVal">15 mm</span></div>
+  <div class="row"><label for="baseExtension">Base extension</label><input type="range" id="baseExtension" min="0" max="30" step="1" value="5"><span class="val" id="baseExtensionVal">5 mm</span></div>
+  <div style="font-size:12px;color:#999;margin-bottom:4px;">Margin added beyond the wall thickness on every side — this is most of what makes the block bigger than the cavity. Also sets how far the risers run to the block's outer faces. Lower = less filament, shorter riser stubs.</div>
+
+  <h2>Gate</h2>
+  <div class="row"><label for="gateDiameter">Gate diameter</label><input type="range" id="gateDiameter" min="2" max="6" step="0.25" value="3"><span class="val" id="gateDiameterVal">3 mm</span></div>
+  <div class="row"><label for="gateRunExtra">Extra run length</label><input type="range" id="gateRunExtra" min="0" max="40" step="1" value="2"><span class="val" id="gateRunExtraVal">2 mm</span></div>
+  <div style="font-size:12px;color:#999;margin-bottom:4px;">Added only on the gate's side, on top of the base extension — gives material more distance to flow before it reaches the cavity, without bulking up the other three sides.</div>
+  <div style="font-size:12px;color:#999;">Gate runs from the hub outward along Y at the parting plane — each half gets a semicircular groove. Length: <span id="gateLengthVal">-</span></div>
+
+  <h2>Risers</h2>
+  <div style="font-size:12px;color:#999;margin-bottom:4px;">Vent pockets drilled from the outer mold face at each blade tip extremity. Wider at entry for easy demold.</div>
+  <div class="row"><label for="riserDiameter">Riser diameter</label><input type="range" id="riserDiameter" min="1" max="8" step="0.5" value="3"><span class="val" id="riserDiameterVal">3 mm</span></div>
+  <div class="row"><label for="riserTaperAngle">Taper angle</label><input type="range" id="riserTaperAngle" min="0" max="15" step="1" value="5"><span class="val" id="riserTaperAngleVal">5°</span></div>
+
+  <button id="resetBtn">Reset to Defaults</button>
+
+  <h2>Parting Surface</h2>
+  <div class="row"><label for="partingPitch">Grid pitch</label><input type="range" id="partingPitch" min="0.5" max="5" step="0.25" value="1"><span class="val" id="partingPitchVal">1 mm</span></div>
+  <div style="font-size:12px;color:#999;margin-bottom:4px;">The parting surface always stays inside the blade, so each half forms one whole face. Finer pitch tracks a feather edge more closely (worst-case deviation is roughly a third of the pitch) but is slower.</div>
+
+  <h2>Export STL</h2>
+  <div style="display:flex;gap:8px;margin-top:4px;flex-wrap:wrap;">
+    <button id="exportTop" style="padding:5px 12px;cursor:pointer;">&#8595; Top Half</button>
+    <button id="exportBottom" style="padding:5px 12px;cursor:pointer;">&#8595; Bottom Half</button>
+  </div>
+  <div id="exportStatus" style="font-size:12px;color:#9fdbff;margin-top:5px;"></div>
+
+  <h2>Legend</h2>
+  <div class="legend">
+    <span><i class="swatch" style="background:#999"></i>Mold base</span>
+    <span><i class="swatch" style="background:#33ccff"></i>Cavity</span>
+    <span><i class="swatch" style="background:#2266ff"></i>Gate</span>
+    <span><i class="swatch" style="background:#ff8833"></i>Risers</span>
+    <span><i class="swatch" style="background:#ffdd00"></i>Parting surface</span>
+  </div>
+
+  <div id="moldStatus" style="margin-top:6px;color:#9fdbff;"></div>
+  <div id="moldWarnings" class="warn"></div>
+</div>
+<script type="module" src="main.js?v=20"></script>
+</body>
+</html>
